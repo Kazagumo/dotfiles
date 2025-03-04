@@ -9,8 +9,8 @@ download() {
 }
 
 replace() {
-	sed "s/geoip.dat/geoip.dat.1/g" geoip.dat.1.sha256sum
-	sed "s/geosite.dat/geosite.dat.1/g" geosite.dat.1.sha256sum
+	sed -i "s/geoip.dat/geoip.dat.1/g" geoip.dat.1.sha256sum
+	sed -i "s/geosite.dat/geosite.dat.1/g" geosite.dat.1.sha256sum
 	sha256sum -cs geosite.dat.1.sha256sum && echo "geosite valid" && rm geosite.dat && mv geosite.dat.1 geosite.dat
 	sha256sum -cs geoip.dat.1.sha256sum && echo "geoip valid" && rm geoip.dat && mv geoip.dat.1 geoip.dat
 }
@@ -19,5 +19,6 @@ cleanup() {
 	rm *.1 *.sha256sum
 }
 
-download && replace
+download && replace && /etc/init.d/daed restart
 cleanup
+
