@@ -1,0 +1,580 @@
+diff --git a/platformio.ini b/platformio.ini
+index 8bf56cf5b..a13dc8244 100644
+--- a/platformio.ini
++++ b/platformio.ini
+@@ -55,6 +55,9 @@ build_flags = -Wno-missing-field-initializers
+ 	-D MAX_THREADS=40 ; As we've split modules, we have more threads to manage
+ 	#-DBUILD_EPOCH=$UNIX_TIME
+ 	#-D OLED_PL=1
++	-D CJK_ENABLE ; enable CJK support
++
++
+ 
+ monitor_speed = 115200
+ monitor_filters = direct
+diff --git a/src/graphics/Screen.cpp b/src/graphics/Screen.cpp
+index 33dc7efcc..7bd499e85 100644
+--- a/src/graphics/Screen.cpp
++++ b/src/graphics/Screen.cpp
+@@ -1427,6 +1427,194 @@ bool Screen::isOverlayBannerShowing()
+     return NotificationRenderer::isOverlayBannerShowing();
+ }
+ 
++#ifdef CJK_ENABLE
++
++void Screen::resetScrolling() {
++    textLines.clear();
++    currentLineStart = 0;
++}
++
++// Convert UTF-8 to Unicode codepoint
++uint16_t Screen::utf8ToUnicode(const char *text, int &byteCount) {
++    uint8_t byte1 = (uint8_t)text[0];
++
++    if (byte1 < 0x80) {
++        // ASCII character
++        byteCount = 1;
++        return byte1;
++    } else if ((byte1 & 0xE0) == 0xC0) {
++        // 2-byte UTF-8
++        byteCount = 2;
++        return ((byte1 & 0x1F) << 6) | ((uint8_t)text[1] & 0x3F);
++    } else if ((byte1 & 0xF0) == 0xE0) {
++        // 3-byte UTF-8 (most CJK characters)
++        byteCount = 3;
++        return ((byte1 & 0x0F) << 12) | (((uint8_t)text[1] & 0x3F) << 6) | ((uint8_t)text[2] & 0x3F);
++    } else if ((byte1 & 0xF8) == 0xF0) {
++        // 4-byte UTF-8
++        byteCount = 4;
++        return ((byte1 & 0x07) << 18) | (((uint8_t)text[1] & 0x3F) << 12) |
++               (((uint8_t)text[2] & 0x3F) << 6) | ((uint8_t)text[3] & 0x3F);
++    }
++
++    byteCount = 1;
++    return 0; // Invalid UTF-8
++}
++
++// Draw a single CJK character
++void Screen::drawCJKChar(OLEDDisplay *display, int16_t x, int16_t y, uint16_t unicode) {
++    const uint8_t *bitmap = getCJKCharBitmap(unicode);
++    if (bitmap == nullptr) {
++        // Character not found, draw fallback
++        display->setFont(FONT_SMALL);
++        display->drawString(x, y, "?");
++        return;
++    }
++
++    // Draw the 12x12 bitmap
++    for (int row = 0; row < CJK_CHAR_HEIGHT; row++) {
++        for (int col = 0; col < CJK_CHAR_WIDTH; col++) {
++            int bytesPerRow = (CJK_CHAR_WIDTH + 7) / 8; // Round up to bytes
++            int byteIndex = row * bytesPerRow + (col / 8);
++            int bitIndex = 7 - (col % 8);
++
++            uint8_t pixelByte = pgm_read_byte(&bitmap[byteIndex]);
++            if (pixelByte & (1 << bitIndex)) {
++                display->setPixel(x + col, y + row);
++            }
++        }
++    }
++}
++
++// Check if a string contains CJK characters
++bool Screen::containsCJKCharacters(const char *text) {
++    int i = 0;
++    while (text[i] != '\0') {
++        int byteCount;
++        uint16_t unicode = utf8ToUnicode(&text[i], byteCount);
++        if (isCJKChar(unicode)) {
++            return true;
++        }
++        i += byteCount;
++    }
++    return false;
++}
++
++// Draw a string containing CJK characters
++void Screen::drawCJKString(OLEDDisplay *display, int16_t x, int16_t y, const char *text) {
++    int currentX = x;
++    int i = 0;
++
++    while (text[i] != '\0') {
++        int byteCount;
++        uint16_t unicode = utf8ToUnicode(&text[i], byteCount);
++
++        if (unicode < 128) {
++            // Draw ASCII character using regular font
++            char asciiChar[2] = {(char)unicode, '\0'};
++            display->setFont(FONT_SMALL);
++            display->drawString(currentX, y, asciiChar);
++            currentX += display->getStringWidth(asciiChar);
++        } else if (isCJKChar(unicode)) {
++            // Draw CJK character
++            drawCJKChar(display, currentX, y, unicode);
++            currentX += CJK_CHAR_WIDTH;
++        } else {
++            // Other Unicode character, use fallback
++            display->setFont(FONT_SMALL);
++            display->drawString(currentX, y, "?");
++            currentX += display->getStringWidth("?");
++        }
++
++        i += byteCount;
++    }
++}
++
++uint16_t Screen::getCJKwidth(OLEDDisplay *display, const char *text){
++    int i = 0;
++    int totalWidth = 0;
++    while (text[i] != '\0') {
++        int byteCount;
++        uint16_t unicode = utf8ToUnicode(&text[i], byteCount);
++        if (isSymbol(unicode)) {
++            char asciiChar[2] = {(char)unicode, '\0'};
++            totalWidth += display->getStringWidth(asciiChar);
++        } else if (isCJKChar(unicode)) {
++            totalWidth += CJK_CHAR_WIDTH;
++        } else {
++            totalWidth += display->getStringWidth("?");
++        }
++        i += byteCount;
++    }
++    return totalWidth;
++}
++
++void Screen::drawCJKStringf(OLEDDisplay *display, int16_t x, int16_t y, char* buffer, String format, ... )
++{
++  va_list myargs;
++  va_start(myargs, format);
++  vsprintf(buffer, format.c_str(), myargs);
++  va_end(myargs);
++  drawCJKString(display, x, y, buffer );
++}
++
++// Draw a string containing CJK characters with automatic line wrapping
++void Screen::drawCJKStringMaxWidth(OLEDDisplay *display, int16_t x, int16_t y, int16_t maxWidth, const char *text) {
++    int lineHeight = max(CJK_CHAR_HEIGHT, FONT_HEIGHT_SMALL);
++    int screenHeight = display->getHeight();
++    int maxDisplayLines = (screenHeight - y) / lineHeight;
++
++    // Break text into lines (do this once)
++    if (textLines.empty()) {
++        String currentLine = "";
++        int currentWidth = 0;
++        int i = 0;
++
++        while (text[i] != '\0') {
++            int byteCount;
++            uint16_t unicode = utf8ToUnicode(&text[i], byteCount);
++            int charWidth = isCJKChar(unicode) ? CJK_CHAR_WIDTH : 6;
++            if (currentWidth + charWidth > maxWidth && currentLine.length() > 0) {
++                textLines.push_back(currentLine);
++                currentLine = "";
++                currentWidth = 0;
++            }
++
++            // Add character to current line
++            for (int j = 0; j < byteCount; j++) {
++                currentLine += text[i + j];
++            }
++            currentWidth += charWidth;
++            i += byteCount;
++        }
++
++        if (currentLine.length() > 0) {
++            textLines.push_back(currentLine);
++        }
++    }
++
++    // Auto-scroll if needed
++    if (textLines.size() > maxDisplayLines) {
++        unsigned long currentTime = millis();
++        if (currentTime - lastScrollTime >= 1500) {
++            currentLineStart++;
++            if (currentLineStart + maxDisplayLines > textLines.size()) {
++                currentLineStart = 0;
++            }
++            lastScrollTime = currentTime;
++        }
++    }
++
++    // Draw visible lines
++    int linesToShow = min(maxDisplayLines, (int)textLines.size() - currentLineStart);
++    for (int i = 0; i < linesToShow; i++) {
++        int lineY = y + (i * lineHeight);
++        drawCJKString(display, x, lineY, textLines[currentLineStart + i].c_str());
++    }
++}
++
++#endif // CJK_ENABLE
++
+ } // namespace graphics
+ 
+ #else
+diff --git a/src/graphics/Screen.h b/src/graphics/Screen.h
+index 265900131..034347e8b 100644
+--- a/src/graphics/Screen.h
++++ b/src/graphics/Screen.h
+@@ -47,6 +47,20 @@ class Screen
+     };
+ 
+     explicit Screen(ScanI2C::DeviceAddress, meshtastic_Config_DisplayConfig_OledType, OLEDDISPLAY_GEOMETRY);
++
++    #ifdef CJK_ENABLE
++    std::vector<String> textLines;
++    int currentLineStart = 0;
++    unsigned long lastScrollTime = 0;
++
++    // CJK font rendering functions
++    void drawCJKString(OLEDDisplay *display, int16_t x, int16_t y, const char *text);
++    void drawCJKStringMaxWidth(OLEDDisplay *display, int16_t x, int16_t y, int16_t maxWidth, const char *text);
++    void drawCJKChar(OLEDDisplay *display, int16_t x, int16_t y, uint16_t unicode);
++    uint16_t utf8ToUnicode(const char *text, int &byteCount);
++    bool containsCJKCharacters(const char *text);
++    void resetScrolling();
++    #endif
+     void onPress() {}
+     void setup() {}
+     void setOn(bool) {}
+@@ -277,6 +291,22 @@ class Screen : public concurrency::OSThread
+     // Draw north
+     float estimatedHeading(double lat, double lon);
+ 
++        #ifdef CJK_ENABLE
++    std::vector<String> textLines;
++    int currentLineStart = 0;
++    unsigned long lastScrollTime = 0;
++
++    // CJK font rendering functions
++    void drawCJKString(OLEDDisplay *display, int16_t x, int16_t y, const char *text);
++    void drawCJKStringf(OLEDDisplay *display, int16_t x, int16_t y, char* buffer, String format, ... );
++    void drawCJKStringMaxWidth(OLEDDisplay *display, int16_t x, int16_t y, int16_t maxWidth, const char *text);
++    void drawCJKChar(OLEDDisplay *display, int16_t x, int16_t y, uint16_t unicode);
++    uint16_t utf8ToUnicode(const char *text, int &byteCount);
++    bool containsCJKCharacters(const char *text);
++    uint16_t getCJKwidth(OLEDDisplay *display, const char *text);
++    void resetScrolling();
++    #endif
++
+     /// Handle button press, trackball or swipe action)
+     void onPress() { enqueueCmd(ScreenCmd{.cmd = Cmd::ON_PRESS}); }
+     void showPrevFrame() { enqueueCmd(ScreenCmd{.cmd = Cmd::SHOW_PREV_FRAME}); }
+diff --git a/src/graphics/ScreenFonts.h b/src/graphics/ScreenFonts.h
+index 3373a47a7..d385dd755 100644
+--- a/src/graphics/ScreenFonts.h
++++ b/src/graphics/ScreenFonts.h
+@@ -1,5 +1,9 @@
+ #pragma once
+ 
++#ifdef CJK_ENABLE
++#include "graphics/fonts/CJKFontData.h"
++#endif
++
+ #ifdef OLED_PL
+ #include "graphics/fonts/OLEDDisplayFontsPL.h"
+ #endif
+diff --git a/src/graphics/draw/MessageRenderer.cpp b/src/graphics/draw/MessageRenderer.cpp
+index 524f88f9b..11ef4d9b0 100644
+--- a/src/graphics/draw/MessageRenderer.cpp
++++ b/src/graphics/draw/MessageRenderer.cpp
+@@ -132,12 +132,29 @@ void drawStringWithEmotes(OLEDDisplay *display, int x, int y, const std::string
+ 
+         if (nextControl > i) {
+             std::string textChunk = line.substr(i, nextControl - i);
++            #ifdef CJK_ENABLE
++            if (inBold) {
++                // Faux bold: draw twice, offset by 1px
++                if (screen->containsCJKCharacters(textChunk.c_str())){
++                    screen->drawCJKString(display, cursorX + 1, fontY, textChunk.c_str());
++                }else{
++                    display->drawString(cursorX + 1, fontY, textChunk.c_str());
++                }
++            }
++                if (screen->containsCJKCharacters(textChunk.c_str())){
++                    screen->drawCJKString(display, cursorX, fontY, textChunk.c_str());
++                    cursorX += screen->getCJKwidth(display, textChunk.c_str());
++                }else{
++                    display->drawString(cursorX, fontY, textChunk.c_str());
++                    cursorX += display->getStringWidth(textChunk.c_str());
++                }
++            #else
+             if (inBold) {
+                 // Faux bold: draw twice, offset by 1px
+                 display->drawString(cursorX + 1, fontY, textChunk.c_str());
+             }
+-            display->drawString(cursorX, fontY, textChunk.c_str());
+-            cursorX += display->getStringWidth(textChunk.c_str());
++                display->drawString(cursorX, fontY, textChunk.c_str());
++            #endif
+             i = nextControl;
+             continue;
+         }
+@@ -151,11 +168,29 @@ void drawStringWithEmotes(OLEDDisplay *display, int x, int y, const std::string
+         } else {
+             // No more emotes — render the rest of the line
+             std::string remaining = line.substr(i);
++            #ifdef CJK_ENABLE
++            if (inBold) {
++                if(screen->containsCJKCharacters(remaining.c_str())){
++                    screen->drawCJKString(display, cursorX + 1, fontY, remaining.c_str());
++                } else {
++                    display->drawString(cursorX + 1, fontY, remaining.c_str());
++                }
++            }
++                if(screen->containsCJKCharacters(remaining.c_str())){
++                    screen->drawCJKString(display, cursorX, fontY, remaining.c_str());
++                    cursorX += screen->getCJKwidth(display, remaining.c_str());
++                } else {
++                    display->drawString(cursorX, fontY, remaining.c_str());
++                    cursorX += display->getStringWidth(remaining.c_str());
++                }
++            #else
+             if (inBold) {
+                 display->drawString(cursorX + 1, fontY, remaining.c_str());
++            } else {
++                display->drawString(cursorX, fontY, remaining.c_str());
+             }
+-            display->drawString(cursorX, fontY, remaining.c_str());
+             cursorX += display->getStringWidth(remaining.c_str());
++            #endif
+             break;
+         }
+     }
+@@ -192,7 +227,15 @@ void drawTextMessageFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16
+         graphics::drawCommonHeader(display, x, y, titleStr);
+         const char *messageString = "No messages";
+         int center_text = (SCREEN_WIDTH / 2) - (display->getStringWidth(messageString) / 2);
+-        display->drawString(center_text, getTextPositions(display)[2], messageString);
++        #ifdef CJK_ENABLE
++        if (screen->containsCJKCharacters(messageString)){
++            screen->drawCJKString(display, center_text, getTextPositions(display)[2], messageString);
++        } else {
++            display->drawString(center_text, getTextPositions(display)[2], messageString);
++        }
++        #else
++        display->drawString(center_text, getTextPositions(display)[2], messageString)
++        #endif
+         return;
+     }
+ 
+@@ -372,6 +415,24 @@ std::vector<std::string> generateLines(OLEDDisplay *display, const char *headerS
+             line += word + ' ';
+             word.clear();
+         } else {
++            #ifdef CJK_ENABLE
++            int byteCount;
++            screen->utf8ToUnicode(&ch,byteCount); // Not sure the UTF-8 Char's len,get it.
++            for (int j = 0; j < byteCount; ++j)
++            {
++                word += messageBuf[ i + j ]; // Write a whole UTF-8 encoded char into word
++            }
++            std::string test = line + word;
++            // Keep these lines for diagnostics
++            // LOG_INFO("Char: '%c' (0x%02X)", ch, (unsigned char)ch);
++            // LOG_INFO("Current String: %s", test.c_str());
++            if (screen->getCJKwidth(display, test.c_str()) > textWidth) { // Use CJKwidth to get actual width of str.
++                if (!line.empty())
++                    lines.push_back(line);
++                line = word;
++                word.clear();
++            }
++            #else
+             word += ch;
+             std::string test = line + word;
+             // Keep these lines for diagnostics
+@@ -383,14 +444,14 @@ std::vector<std::string> generateLines(OLEDDisplay *display, const char *headerS
+                 line = word;
+                 word.clear();
+             }
++            #endif
+         }
+-    }
+-
++   }
++        
+     if (!word.empty())
+         line += word;
+     if (!line.empty())
+         lines.push_back(line);
+-
+     return lines;
+ }
+ 
+@@ -432,9 +493,24 @@ void renderMessageContent(OLEDDisplay *display, const std::vector<std::string> &
+             lineY += rowHeights[j];
+         if (lineY > -rowHeights[i] && lineY < scrollBottom) {
+             if (i == 0 && isInverted) {
++                #ifdef CJK_ENABLE
++                if (screen->containsCJKCharacters(lines[i].c_str())){
++                    screen->drawCJKString(display, x, lineY, lines[i].c_str());
++                } else {
++                    display->drawString(x, lineY, lines[i].c_str());
++                }
++                if (isBold) {
++                    if (screen->containsCJKCharacters(lines[i].c_str())){
++                        screen->drawCJKString(display, x, lineY, lines[i].c_str());
++                    } else {
++                        display->drawString(x, lineY, lines[i].c_str());
++                    }
++                }
++                #else
+                 display->drawString(x, lineY, lines[i].c_str());
+                 if (isBold)
+                     display->drawString(x, lineY, lines[i].c_str());
++                #endif
+             } else {
+                 drawStringWithEmotes(display, x, lineY, lines[i], emotes, numEmotes);
+             }
+diff --git a/src/modules/CannedMessageModule.cpp b/src/modules/CannedMessageModule.cpp
+index b6cb1b0e3..bc03504d0 100644
+--- a/src/modules/CannedMessageModule.cpp
++++ b/src/modules/CannedMessageModule.cpp
+@@ -37,6 +37,9 @@
+ #define INACTIVATE_AFTER_MS 20000
+ 
+ extern ScanI2C::DeviceAddress cardkb_found;
++#ifdef CJK_ENABLE
++extern graphics::Screen *screen;
++#endif
+ extern bool graphics::isMuted;
+ 
+ static const char *cannedMessagesConfigFile = "/prefs/cannedConf.proto";
+@@ -184,6 +187,42 @@ int CannedMessageModule::splitConfiguredMessages()
+ 
+     return this->messagesCount;
+ }
++
++#ifdef CJK_ENABLE
++void CannedMessageModule::drawHeader(OLEDDisplay *display, int16_t x, int16_t y, char *buffer)
++{
++    if (graphics::isHighResolution) {
++        if (this->dest == NODENUM_BROADCAST) {
++            if (screen->containsCJKCharacters(channels.getName(this->channel))){
++                screen->drawCJKStringf(display, x, y, buffer, "To: Broadcast@%s", channels.getName(this->channel));
++            }else{
++                display->drawStringf(x, y, buffer, "To: Broadcast@%s", channels.getName(this->channel));
++            }
++        } else {
++            if (screen->containsCJKCharacters(getNodeName(this->dest))){
++                screen->drawCJKStringf(display, x, y, buffer, "To: %s", getNodeName(this->dest));
++            }else{
++                display->drawStringf(x, y, buffer, "To: %s", getNodeName(this->dest));
++            }
++        }
++    } else {
++        if (this->dest == NODENUM_BROADCAST) {
++            if (screen->containsCJKCharacters(channels.getName(this->channel))){
++                screen->drawCJKStringf(display, x, y, buffer, "To: Broadc@%.5s", channels.getName(this->channel));
++            }else{
++                display->drawStringf(x, y, buffer, "To: Broadc@%.5s", channels.getName(this->channel));;
++            }
++        } else {
++            if (screen->containsCJKCharacters(getNodeName(this->dest))){
++                screen->drawCJKStringf(display, x, y, buffer, "To: %s", getNodeName(this->dest));
++            }else{
++                display->drawStringf(x, y, buffer, "To: %s", getNodeName(this->dest));
++            }
++        }
++    }
++}
++
++#else
+ void CannedMessageModule::drawHeader(OLEDDisplay *display, int16_t x, int16_t y, char *buffer)
+ {
+     if (graphics::isHighResolution) {
+@@ -200,6 +239,7 @@ void CannedMessageModule::drawHeader(OLEDDisplay *display, int16_t x, int16_t y,
+         }
+     }
+ }
++#endif
+ 
+ void CannedMessageModule::resetSearch()
+ {
+@@ -1454,7 +1494,15 @@ void CannedMessageModule::drawDestinationSelectionScreen(OLEDDisplay *display, O
+         }
+ 
+         // === Draw entry text ===
++        #ifdef CJK_ENABLE
++        if (screen->containsCJKCharacters(entryText)){
++            screen->drawCJKString(display, xOffset + 2, yOffset, entryText);
++        } else {
+         display->drawString(xOffset + 2, yOffset, entryText);
++        }
++        #else
++        display->drawString(xOffset + 2, yOffset, entryText);
++        #endif
+         display->setColor(WHITE);
+ 
+         // === Draw key icon (after highlight) ===
+@@ -1582,7 +1630,15 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
+         LOG_DEBUG("Draw temporary message: %s", temporaryMessage.c_str());
+         display->setTextAlignment(TEXT_ALIGN_CENTER);
+         display->setFont(FONT_MEDIUM);
++        #ifdef CJK_ENABLE
++        if(screen->containsCJKCharacters(temporaryMessage.c_str())){
++            screen->drawCJKString(display, display->getWidth() / 2 + x, 0 + y + 12, temporaryMessage.c_str());
++        } else {
++            display->drawString(display->getWidth() / 2 + x, 0 + y + 12, temporaryMessage);
++        }
++        #else
+         display->drawString(display->getWidth() / 2 + x, 0 + y + 12, temporaryMessage);
++        #endif
+         return;
+     }
+ 
+@@ -1632,8 +1688,15 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
+             if (*ptr == '\n')
+                 lineCount++;
+         }
+-
+-        display->drawString(display->getWidth() / 2 + x, yOffset, buffer);
++        #ifdef CJK_ENABLE
++        if (screen->containsCJKCharacters(buffer)){
++            screen->drawCJKString(display, display->getWidth() / 2 + x, yOffset, buffer);
++        } else {
++            display->drawString(display->getWidth() / 2 + x, yOffset, buffer);
++        }
++        #else
++            display->drawString(display->getWidth() / 2 + x, yOffset, buffer);
++        #endif
+         yOffset += lineCount * FONT_HEIGHT_MEDIUM; // only 1 line gap, no extra padding
+ 
+ #ifndef USE_EINK
+@@ -1829,8 +1892,18 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
+                             nextX += emote->width + 2;
+                         }
+                     } else {
++                        #ifdef CJK_ENABLE
++                        if (screen->containsCJKCharacters(token.second.c_str())){
++                            screen->drawCJKString(display, nextX, yLine, token.second.c_str());
++                            nextX += screen->getCJKwidth(display, token.second.c_str());
++                        } else {
++                            display->drawString(nextX, yLine, token.second);
++                            nextX += display->getStringWidth(token.second);
++                        }
++                        #else
+                         display->drawString(nextX, yLine, token.second);
+                         nextX += display->getStringWidth(token.second);
++                        #endif
+                     }
+                 }
+                 yLine += rowHeight;
+@@ -1973,8 +2046,18 @@ void CannedMessageModule::drawFrame(OLEDDisplay *display, OLEDDisplayUiState *st
+                     }
+                 } else {
+                     // Text
++                    #ifdef CJK_ENABLE
++                    if (screen->containsCJKCharacters(token.second.c_str())){
++                            screen->drawCJKString(display, nextX, lineY + textYOffset, token.second.c_str());
++                            nextX += screen->getCJKwidth(display, token.second.c_str());
++                        } else {
++                            display->drawString(nextX, lineY + textYOffset, token.second);
++                            nextX += display->getStringWidth(token.second);
++                    }
++                    #else
+                     display->drawString(nextX, lineY + textYOffset, token.second);
+                     nextX += display->getStringWidth(token.second);
++                    #endif
+                 }
+             }
+ #ifndef USE_EINK
