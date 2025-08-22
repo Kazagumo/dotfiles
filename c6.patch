@@ -1,0 +1,275 @@
+diff --git a/arch/esp32/esp32c6.ini b/arch/esp32/esp32c6.ini
+index 1afb9b547..f0b464a84 100644
+--- a/arch/esp32/esp32c6.ini
++++ b/arch/esp32/esp32c6.ini
+@@ -2,24 +2,26 @@
+ extends = esp32_base
+ platform =
+   # Do not renovate until we have switched to pioarduino tagged builds
+-  https://github.com/Jason2866/platform-espressif32/archive/22faa566df8c789000f8136cd8d0aca49617af55.zip
++  https://github.com/pioarduino/platform-espressif32/releases/download/54.03.21-2/platform-espressif32.zip
++  ;https://github.com/Jason2866/platform-espressif32/archive/refs/heads/Arduino/IDF53.zip
++  ;https://github.com/Jason2866/platform-espressif32/archive/22faa566df8c789000f8136cd8d0aca49617af55.zip
+ build_flags =
+   ${arduino_base.build_flags}
+   -Wall
+   -Wextra
+   -Isrc/platform/esp32
+   -std=c++11
++  -DESP32C6
+   -DESP_OPENSSL_SUPPRESS_LEGACY_WARNING
+   -DSERIAL_BUFFER_SIZE=4096
+   -DLIBPAX_ARDUINO
+   -DLIBPAX_WIFI
+   -DLIBPAX_BLE
+-  -DMESHTASTIC_EXCLUDE_WEBSERVER
++  ;-DMESHTASTIC_EXCLUDE_WEBSERVER
+   ;-DDEBUG_HEAP
+   ; TEMP
+-  -DHAS_BLUETOOTH=0
+   -DMESHTASTIC_EXCLUDE_PAXCOUNTER
+-  -DMESHTASTIC_EXCLUDE_BLUETOOTH
++  ;-DMESHTASTIC_EXCLUDE_BLUETOOTH
+ 
+ lib_deps =
+   ${arduino_base.lib_deps}
+@@ -27,21 +29,28 @@ lib_deps =
+   ${environmental_base.lib_deps}
+   ${environmental_extra.lib_deps}
+   ${radiolib_base.lib_deps}
++  # renovate: datasource=git-refs depName=libpax packageName=https://github.com/dbinfrago/libpax gitBranch=master
++  https://github.com/dbinfrago/libpax/archive/3cdc0371c375676a97967547f4065607d4c53fd1.zip
+   # renovate: datasource=custom.pio depName=XPowersLib packageName=lewisxhe/library/XPowersLib
+   lewisxhe/XPowersLib@0.3.0
+   # renovate: datasource=git-refs depName=meshtastic-ESP32_Codec2 packageName=https://github.com/meshtastic/ESP32_Codec2 gitBranch=master
+   https://github.com/meshtastic/ESP32_Codec2/archive/633326c78ac251c059ab3a8c430fcdf25b41672f.zip
+   # renovate: datasource=custom.pio depName=rweather/Crypto packageName=rweather/library/Crypto
+   rweather/Crypto@0.4.0
++  # renovate: datasource=github-tags depName=esp-nimble-cpp packageName=h2zero/esp-nimble-cpp
++  https://github.com/h2zero/NimBLE-Arduino/archive/refs/tags/2.3.4.zip
++  https://github.com/Kazagumo/NonBlockingRTTTL-idf5.1/archive/refs/heads/master.zip
++  https://github.com/meshtastic/esp32_https_server/archive/3223704846752e6d545139204837bdb2a55459ca.zip
+ 
+ build_src_filter = 
+- ${esp32_base.build_src_filter} -<mesh/http> 
++ ${esp32_base.build_src_filter} 
+ 
+ monitor_speed = 460800
+ monitor_filters = esp32_c3_exception_decoder
+ 
+ lib_ignore =
+   NonBlockingRTTTL
+-  NimBLE-Arduino
++  ;NimBLE-Arduino
+   libpax
++  Syslog
+diff --git a/src/nimble/NimbleBluetooth.cpp b/src/nimble/NimbleBluetooth.cpp
+index 95e191c8e..4e7dd0152 100644
+--- a/src/nimble/NimbleBluetooth.cpp
++++ b/src/nimble/NimbleBluetooth.cpp
+@@ -78,8 +78,12 @@ static BluetoothPhoneAPI *bluetoothPhoneAPI;
+ static uint8_t lastToRadio[MAX_TO_FROM_RADIO_SIZE];
+ 
+ class NimbleBluetoothToRadioCallback : public NimBLECharacteristicCallbacks
+-{
++{   
++    #ifdef ESP32C6
++    virtual void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo)
++    #else
+     virtual void onWrite(NimBLECharacteristic *pCharacteristic)
++    #endif
+     {
+         auto val = pCharacteristic->getValue();
+ 
+@@ -96,8 +100,12 @@ class NimbleBluetoothToRadioCallback : public NimBLECharacteristicCallbacks
+ };
+ 
+ class NimbleBluetoothFromRadioCallback : public NimBLECharacteristicCallbacks
+-{
++{   
++    #ifdef ESP32C6
++    virtual void onRead(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo)
++    #else
+     virtual void onRead(NimBLECharacteristic *pCharacteristic)
++    #endif
+     {
+         int tries = 0;
+         bluetoothPhoneAPI->phoneWants = true;
+@@ -120,9 +128,14 @@ class NimbleBluetoothFromRadioCallback : public NimBLECharacteristicCallbacks
+ };
+ 
+ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
+-{
++{   
++    #ifdef ESP32C6
++    virtual uint32_t onPassKeyDisplay()
++    #else
+     virtual uint32_t onPassKeyRequest()
+-    {
++    #endif
++    {   
++
+         uint32_t passkey = config.bluetooth.fixed_pin;
+ 
+         if (config.bluetooth.mode == meshtastic_Config_BluetoothConfig_PairingMode_RANDOM_PIN) {
+@@ -168,8 +181,11 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
+ 
+         return passkey;
+     }
+-
++    #ifdef ESP32C6
++    virtual void onAuthenticationComplete(NimBLEConnInfo &connInfo)
++    #else
+     virtual void onAuthenticationComplete(ble_gap_conn_desc *desc)
++    #endif
+     {
+         LOG_INFO("BLE authentication complete");
+ 
+@@ -182,8 +198,11 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
+                 screen->endAlert();
+         }
+     }
+-
++    #ifdef ESP32C6
++    virtual void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo, int reason)
++    #else
+     virtual void onDisconnect(NimBLEServer *pServer, ble_gap_conn_desc *desc)
++    #endif
+     {
+         LOG_INFO("BLE disconnect");
+ 
+@@ -229,6 +248,7 @@ void NimbleBluetooth::deinit()
+     digitalWrite(BLE_LED, LOW);
+ #endif
+ #endif
++    //if fails disable it.
+     //NimBLEDevice::deinit();
+ #endif
+ }
+@@ -249,7 +269,11 @@ int NimbleBluetooth::getRssi()
+     if (bleServer && isConnected()) {
+         auto service = bleServer->getServiceByUUID(MESH_SERVICE_UUID);
+         uint16_t handle = service->getHandle();
++        #ifdef ESP32C6
++        return NimBLEDevice::getClientByHandle(handle)->getRssi();
++        #else
+         return NimBLEDevice::getClientByID(handle)->getRssi();
++        #endif
+     }
+     return 0; // FIXME figure out where to source this
+ }
+@@ -274,6 +298,9 @@ void NimbleBluetooth::setup()
+ 
+     NimbleBluetoothServerCallback *serverCallbacks = new NimbleBluetoothServerCallback();
+     bleServer->setCallbacks(serverCallbacks, true);
++    #ifdef ESP32C6
++    bleServer->advertiseOnDisconnect(true);
++    #endif
+     setupService();
+     startAdvertising();
+ }
+@@ -316,8 +343,12 @@ void NimbleBluetooth::setupService()
+     NimBLEService *batteryService = bleServer->createService(NimBLEUUID((uint16_t)0x180f)); // 0x180F is the Battery Service
+     BatteryCharacteristic = batteryService->createCharacteristic( // 0x2A19 is the Battery Level characteristic)
+         (uint16_t)0x2a19, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY, 1);
+-
++    
++    #ifdef ESP32C6
++    NimBLE2904 *batteryLevelDescriptor = (NimBLE2904 *)BatteryCharacteristic->create2904();
++    #else
+     NimBLE2904 *batteryLevelDescriptor = (NimBLE2904 *)BatteryCharacteristic->createDescriptor((uint16_t)0x2904);
++    #endif
+     batteryLevelDescriptor->setFormat(NimBLE2904::FORMAT_UINT8);
+     batteryLevelDescriptor->setNamespace(1);
+     batteryLevelDescriptor->setUnit(0x27ad);
+@@ -326,12 +357,33 @@ void NimbleBluetooth::setupService()
+ }
+ 
+ void NimbleBluetooth::startAdvertising()
+-{
++{   
++    #ifdef ESP32C6
++    NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
++    pAdvertising->reset();
++    // Create a broadcast data object
++    NimBLEAdvertisementData advertisementData;
++    // Set advertising Flags
++    uint8_t flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP; 
++    advertisementData.setFlags(flags); // Type 0x01
++    // Device name
++    advertisementData.setName(getDeviceName()); // Type 0x09
++    NimBLEAdvertisementData scanResponseData;
++    // Add a master service UUID (Type 0x07)
++    scanResponseData.addServiceUUID(NimBLEUUID(MESH_SERVICE_UUID)); // Type 0x07
++    // Add the battery service UUID to the scan response
++    scanResponseData.addServiceUUID(NimBLEUUID((uint16_t)0x180F)); // Type 0x03
++    // Apply broadcast and scan response data
++    pAdvertising->setAdvertisementData(advertisementData);
++    pAdvertising->setScanResponseData(scanResponseData);
++    pAdvertising->start(0);
++    #else
+     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
+     pAdvertising->reset();
+     pAdvertising->addServiceUUID(MESH_SERVICE_UUID);
+     pAdvertising->addServiceUUID(NimBLEUUID((uint16_t)0x180f)); // 0x180F is the Battery Service
+     pAdvertising->start(0);
++    #endif
+ }
+ 
+ /// Given a level between 0-100, update the BLE attribute
+diff --git a/src/platform/esp32/main-esp32.cpp b/src/platform/esp32/main-esp32.cpp
+index cdea53c9a..7e23236a1 100644
+--- a/src/platform/esp32/main-esp32.cpp
++++ b/src/platform/esp32/main-esp32.cpp
+@@ -173,7 +173,7 @@ void esp32Setup()
+     esp_task_wdt_config_t *wdt_config = (esp_task_wdt_config_t *)malloc(sizeof(esp_task_wdt_config_t));
+     wdt_config->timeout_ms = APP_WATCHDOG_SECS * 1000;
+     wdt_config->trigger_panic = true;
+-    res = esp_task_wdt_init(wdt_config);
++    res = esp_task_wdt_reconfigure(wdt_config);
+     assert(res == ESP_OK);
+ #else
+     res = esp_task_wdt_init(APP_WATCHDOG_SECS, true);
+diff --git a/src/sleep.cpp b/src/sleep.cpp
+index 1a5f246c5..ef9b4f97f 100644
+--- a/src/sleep.cpp
++++ b/src/sleep.cpp
+@@ -81,8 +81,10 @@ void setCPUFast(bool on)
+          * (Added: Dec 23, 2021 by Jm Casler)
+          */
+ #ifndef CONFIG_IDF_TARGET_ESP32C3
++#ifndef CONFIG_IDF_TARGET_ESP32C6
+         LOG_DEBUG("Set CPU to 240MHz because WiFi is in use");
+         setCpuFrequencyMhz(240);
++#endif
+ #endif
+         return;
+     }
+diff --git a/variants/esp32c6/tlora_c6/platformio.ini b/variants/esp32c6/tlora_c6/platformio.ini
+index 6b402d7c5..8a58755f0 100644
+--- a/variants/esp32c6/tlora_c6/platformio.ini
++++ b/variants/esp32c6/tlora_c6/platformio.ini
+@@ -8,3 +8,23 @@ build_flags =
+   -I variants/esp32c6/tlora_c6
+   -DARDUINO_USB_CDC_ON_BOOT=1
+   -DARDUINO_USB_MODE=1
++
++[env:usugumo-c6]
++extends = esp32c6_base
++board = esp32-c6-devkitm-1
++framework = arduino
++;framework = arduino, espidf
++;extra_scripts = bin/platformio-custom.py
++board_level = pr
++build_flags = 
++  ${esp32c6_base.build_flags}
++  -D PRIVATE_HW
++  -I variants/esp32c6/tlora_c6
++  -DARDUINO_USB_CDC_ON_BOOT=1
++  -DARDUINO_USB_MODE=1
++  -L "${platformio.libdeps_dir}/${this.__env__}/bsec2/src/esp32c3"
++  -D HAS_BLUETOOTH=1
++  -D CONFIG_NIMBLE_CPP_FREERTOS_TASK_BLOCK_BIT=1
++build_unflags = 
++  -D
++
