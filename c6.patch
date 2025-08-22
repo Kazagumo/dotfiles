@@ -245,6 +245,19 @@ index 1a5f246c5..ef9b4f97f 100644
  #endif
          return;
      }
+diff --git a/src/modules/ExternalNotificationModule.h b/src/modules/ExternalNotificationModule.h
+index 19cf9eb7b..5cfd53cfa 100644
+--- a/src/modules/ExternalNotificationModule.h
++++ b/src/modules/ExternalNotificationModule.h
+@@ -5,7 +5,7 @@
+ #include "configuration.h"
+ #include "input/InputBroker.h"
+ 
+-#if !defined(ARCH_PORTDUINO) && !defined(ARCH_STM32WL) && !defined(CONFIG_IDF_TARGET_ESP32C6)
++#if !defined(ARCH_PORTDUINO) && !defined(ARCH_STM32WL)
+ #include <NonBlockingRtttl.h>
+ #else
+ // Noop class for portduino.
 diff --git a/variants/esp32c6/tlora_c6/platformio.ini b/variants/esp32c6/tlora_c6/platformio.ini
 index 6b402d7c5..8a58755f0 100644
 --- a/variants/esp32c6/tlora_c6/platformio.ini
