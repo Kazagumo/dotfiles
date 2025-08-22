@@ -1,15 +1,14 @@
 diff --git a/arch/esp32/esp32c6.ini b/arch/esp32/esp32c6.ini
-index 1afb9b547..f0b464a84 100644
+index 1afb9b54..3da951c1 100644
 --- a/arch/esp32/esp32c6.ini
 +++ b/arch/esp32/esp32c6.ini
-@@ -2,24 +2,26 @@
+@@ -2,46 +2,48 @@
  extends = esp32_base
  platform =
    # Do not renovate until we have switched to pioarduino tagged builds
 -  https://github.com/Jason2866/platform-espressif32/archive/22faa566df8c789000f8136cd8d0aca49617af55.zip
 +  https://github.com/pioarduino/platform-espressif32/releases/download/54.03.21-2/platform-espressif32.zip
-+  ;https://github.com/Jason2866/platform-espressif32/archive/refs/heads/Arduino/IDF53.zip
-+  ;https://github.com/Jason2866/platform-espressif32/archive/22faa566df8c789000f8136cd8d0aca49617af55.zip
++
  build_flags =
    ${arduino_base.build_flags}
    -Wall
@@ -23,48 +22,89 @@ index 1afb9b547..f0b464a84 100644
    -DLIBPAX_WIFI
    -DLIBPAX_BLE
 -  -DMESHTASTIC_EXCLUDE_WEBSERVER
-+  ;-DMESHTASTIC_EXCLUDE_WEBSERVER
    ;-DDEBUG_HEAP
    ; TEMP
 -  -DHAS_BLUETOOTH=0
    -DMESHTASTIC_EXCLUDE_PAXCOUNTER
 -  -DMESHTASTIC_EXCLUDE_BLUETOOTH
-+  ;-DMESHTASTIC_EXCLUDE_BLUETOOTH
  
  lib_deps =
-   ${arduino_base.lib_deps}
-@@ -27,21 +29,28 @@ lib_deps =
-   ${environmental_base.lib_deps}
-   ${environmental_extra.lib_deps}
-   ${radiolib_base.lib_deps}
-+  # renovate: datasource=git-refs depName=libpax packageName=https://github.com/dbinfrago/libpax gitBranch=master
-+  https://github.com/dbinfrago/libpax/archive/3cdc0371c375676a97967547f4065607d4c53fd1.zip
-   # renovate: datasource=custom.pio depName=XPowersLib packageName=lewisxhe/library/XPowersLib
-   lewisxhe/XPowersLib@0.3.0
-   # renovate: datasource=git-refs depName=meshtastic-ESP32_Codec2 packageName=https://github.com/meshtastic/ESP32_Codec2 gitBranch=master
-   https://github.com/meshtastic/ESP32_Codec2/archive/633326c78ac251c059ab3a8c430fcdf25b41672f.zip
-   # renovate: datasource=custom.pio depName=rweather/Crypto packageName=rweather/library/Crypto
-   rweather/Crypto@0.4.0
-+  # renovate: datasource=github-tags depName=esp-nimble-cpp packageName=h2zero/esp-nimble-cpp
+-  ${arduino_base.lib_deps}
+-  ${networking_base.lib_deps}
+-  ${environmental_base.lib_deps}
+-  ${environmental_extra.lib_deps}
+-  ${radiolib_base.lib_deps}
+-  # renovate: datasource=custom.pio depName=XPowersLib packageName=lewisxhe/library/XPowersLib
+-  lewisxhe/XPowersLib@0.3.0
+-  # renovate: datasource=git-refs depName=meshtastic-ESP32_Codec2 packageName=https://github.com/meshtastic/ESP32_Codec2 gitBranch=master
+-  https://github.com/meshtastic/ESP32_Codec2/archive/633326c78ac251c059ab3a8c430fcdf25b41672f.zip
+-  # renovate: datasource=custom.pio depName=rweather/Crypto packageName=rweather/library/Crypto
+-  rweather/Crypto@0.4.0
+-
+-build_src_filter = 
+- ${esp32_base.build_src_filter} -<mesh/http> 
+-
+-monitor_speed = 460800
+-monitor_filters = esp32_c3_exception_decoder
+-
+-lib_ignore =
+-  NonBlockingRTTTL
+-  NimBLE-Arduino
+-  libpax
++   ${arduino_base.lib_deps}
++   ${environmental_base.lib_deps}
++   ${environmental_extra.lib_deps}
++   ${radiolib_base.lib_deps}
++   # renovate: datasource=custom.pio depName=XPowersLib packageName=lewisxhe/library/XPowersLib
++   lewisxhe/XPowersLib@0.3.0
++   # renovate: datasource=git-refs depName=meshtastic-ESP32_Codec2 packageName=https://github.com/meshtastic/ESP32_Codec2 gitBranch=master
++   https://github.com/meshtastic/ESP32_Codec2/archive/633326c78ac251c059ab3a8c430fcdf25b41672f.zip
++   # renovate: datasource=custom.pio depName=rweather/Crypto packageName=rweather/library/Crypto
++   rweather/Crypto@0.4.0
++   # renovate: datasource=github-tags depName=esp-nimble-cpp packageName=h2zero/esp-nimble-cpp
 +  https://github.com/h2zero/NimBLE-Arduino/archive/refs/tags/2.3.4.zip
 +  https://github.com/Kazagumo/NonBlockingRTTTL-idf5.1/archive/refs/heads/master.zip
 +  https://github.com/meshtastic/esp32_https_server/archive/3223704846752e6d545139204837bdb2a55459ca.zip
- 
- build_src_filter = 
-- ${esp32_base.build_src_filter} -<mesh/http> 
++ 
++ build_src_filter = 
 + ${esp32_base.build_src_filter} 
++ 
++ monitor_speed = 460800
++ monitor_filters = esp32_c3_exception_decoder
++ 
++ lib_ignore =
++   NonBlockingRTTTL
++   libpax
++   Syslog
+   
+diff --git a/src/main.cpp b/src/main.cpp
+index ef5f5a72..81ea7307 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1512,7 +1512,7 @@ extern meshtastic_DeviceMetadata getDeviceMetadata()
+ // No bluetooth on these targets (yet):
+ // Pico W / 2W may get it at some point
+ // Portduino and ESP32-C6 are excluded because we don't have a working bluetooth stacks integrated yet.
+-#if defined(ARCH_RP2040) || defined(ARCH_PORTDUINO) || defined(ARCH_STM32WL) || defined(CONFIG_IDF_TARGET_ESP32C6)
++#if defined(ARCH_RP2040) || defined(ARCH_PORTDUINO) || defined(ARCH_STM32WL)
+     deviceMetadata.excluded_modules |= meshtastic_ExcludedModules_BLUETOOTH_CONFIG;
+ #endif
  
- monitor_speed = 460800
- monitor_filters = esp32_c3_exception_decoder
+diff --git a/src/modules/ExternalNotificationModule.h b/src/modules/ExternalNotificationModule.h
+index 19cf9eb7..5cfd53cf 100644
+--- a/src/modules/ExternalNotificationModule.h
++++ b/src/modules/ExternalNotificationModule.h
+@@ -5,7 +5,7 @@
+ #include "configuration.h"
+ #include "input/InputBroker.h"
  
- lib_ignore =
-   NonBlockingRTTTL
--  NimBLE-Arduino
-+  ;NimBLE-Arduino
-   libpax
-+  Syslog
+-#if !defined(ARCH_PORTDUINO) && !defined(ARCH_STM32WL) && !defined(CONFIG_IDF_TARGET_ESP32C6)
++#if !defined(ARCH_PORTDUINO) && !defined(ARCH_STM32WL)
+ #include <NonBlockingRtttl.h>
+ #else
+ // Noop class for portduino.
 diff --git a/src/nimble/NimbleBluetooth.cpp b/src/nimble/NimbleBluetooth.cpp
-index 95e191c8e..4e7dd0152 100644
+index 95e191c8..4e7dd015 100644
 --- a/src/nimble/NimbleBluetooth.cpp
 +++ b/src/nimble/NimbleBluetooth.cpp
 @@ -78,8 +78,12 @@ static BluetoothPhoneAPI *bluetoothPhoneAPI;
@@ -143,7 +183,7 @@ index 95e191c8e..4e7dd0152 100644
  #endif
  #endif
 +    //if fails disable it.
-     //NimBLEDevice::deinit();
+     NimBLEDevice::deinit();
  #endif
  }
 @@ -249,7 +269,11 @@ int NimbleBluetooth::getRssi()
@@ -218,7 +258,7 @@ index 95e191c8e..4e7dd0152 100644
  
  /// Given a level between 0-100, update the BLE attribute
 diff --git a/src/platform/esp32/main-esp32.cpp b/src/platform/esp32/main-esp32.cpp
-index cdea53c9a..7e23236a1 100644
+index cdea53c9..7e23236a 100644
 --- a/src/platform/esp32/main-esp32.cpp
 +++ b/src/platform/esp32/main-esp32.cpp
 @@ -173,7 +173,7 @@ void esp32Setup()
@@ -231,7 +271,7 @@ index cdea53c9a..7e23236a1 100644
  #else
      res = esp_task_wdt_init(APP_WATCHDOG_SECS, true);
 diff --git a/src/sleep.cpp b/src/sleep.cpp
-index 1a5f246c5..ef9b4f97f 100644
+index 1a5f246c..ef9b4f97 100644
 --- a/src/sleep.cpp
 +++ b/src/sleep.cpp
 @@ -81,8 +81,10 @@ void setCPUFast(bool on)
@@ -245,24 +285,11 @@ index 1a5f246c5..ef9b4f97f 100644
  #endif
          return;
      }
-diff --git a/src/modules/ExternalNotificationModule.h b/src/modules/ExternalNotificationModule.h
-index 19cf9eb7b..5cfd53cfa 100644
---- a/src/modules/ExternalNotificationModule.h
-+++ b/src/modules/ExternalNotificationModule.h
-@@ -5,7 +5,7 @@
- #include "configuration.h"
- #include "input/InputBroker.h"
- 
--#if !defined(ARCH_PORTDUINO) && !defined(ARCH_STM32WL) && !defined(CONFIG_IDF_TARGET_ESP32C6)
-+#if !defined(ARCH_PORTDUINO) && !defined(ARCH_STM32WL)
- #include <NonBlockingRtttl.h>
- #else
- // Noop class for portduino.
 diff --git a/variants/esp32c6/tlora_c6/platformio.ini b/variants/esp32c6/tlora_c6/platformio.ini
-index 6b402d7c5..8a58755f0 100644
+index 6b402d7c..bb5648a9 100644
 --- a/variants/esp32c6/tlora_c6/platformio.ini
 +++ b/variants/esp32c6/tlora_c6/platformio.ini
-@@ -8,3 +8,23 @@ build_flags =
+@@ -8,3 +8,18 @@ build_flags =
    -I variants/esp32c6/tlora_c6
    -DARDUINO_USB_CDC_ON_BOOT=1
    -DARDUINO_USB_MODE=1
@@ -271,8 +298,6 @@ index 6b402d7c5..8a58755f0 100644
 +extends = esp32c6_base
 +board = esp32-c6-devkitm-1
 +framework = arduino
-+;framework = arduino, espidf
-+;extra_scripts = bin/platformio-custom.py
 +board_level = pr
 +build_flags = 
 +  ${esp32c6_base.build_flags}
@@ -282,7 +307,4 @@ index 6b402d7c5..8a58755f0 100644
 +  -DARDUINO_USB_MODE=1
 +  -L "${platformio.libdeps_dir}/${this.__env__}/bsec2/src/esp32c3"
 +  -D HAS_BLUETOOTH=1
-+  -D CONFIG_NIMBLE_CPP_FREERTOS_TASK_BLOCK_BIT=1
-+build_unflags = 
-+  -D
 +
